@@ -4,19 +4,23 @@ const {
     getEstudiantes,
     createEstudiante,
     updateEstudiante,
-    deleteEstudiante
+    deleteEstudiante,
+    invertirLista,
 } = require('../controllers/estudiante.controller');
 
 // Obtener todos los estudiantes (incluye búsqueda y paginación) [cite: 21, 22]
 router.get('/', getEstudiantes);
 
+// Invertir lista in-place (Requisito 2.1)
+router.post('/invertir', invertirLista);
+
 // Crear un nuevo estudiante 
 router.post('/', createEstudiante);
 
-// Actualizar un estudiante por ID 
-router.put('/:id', updateEstudiante);
+// Actualizar un estudiante por carnet 
+router.put('/:carnet', updateEstudiante);
 
-// Eliminar un estudiante 
-router.delete('/:id', deleteEstudiante);
+// Eliminar un estudiante por carnet
+router.delete('/:carnet', deleteEstudiante);
 
 module.exports = router;
