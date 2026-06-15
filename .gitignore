@@ -10,3 +10,6 @@ frontend/node_modules/
 dist/
 .angular/
 .vite/
+
+# Datos de persistencia local (generados en tiempo de ejecución)
+backend/data/

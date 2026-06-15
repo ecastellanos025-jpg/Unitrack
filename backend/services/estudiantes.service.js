@@ -2,32 +2,65 @@ class NodoEstudiante {
   constructor(estudiante) {
     this.estudiante = estudiante;
     this.siguiente = null;
-    this.anterior = null; // Puntero doble
   }
 }
 
-class EstudiantesLinkedList {
+class EstudiantesSimpleLinkedList {
   constructor() {
     this.cabeza = null;
-    this.cola = null; // Opcional, pero útil
     this._tamano = 0;
   }
 
-  // Insertar al final (Requisito 2.1)
+  // Insertar al inicio
+  insertarAlInicio(estudiante) {
+    const nuevo = new NodoEstudiante(estudiante);
+    nuevo.siguiente = this.cabeza;
+    this.cabeza = nuevo;
+    this._tamano++;
+  }
+
+  // Insertar al final
   insertarAlFinal(estudiante) {
     const nuevo = new NodoEstudiante(estudiante);
     if (!this.cabeza) {
       this.cabeza = nuevo;
-      this.cola = nuevo;
     } else {
-      nuevo.anterior = this.cola;
-      this.cola.siguiente = nuevo;
-      this.cola = nuevo;
+      let actual = this.cabeza;
+      while (actual.siguiente) {
+        actual = actual.siguiente;
+      }
+      actual.siguiente = nuevo;
     }
     this._tamano++;
   }
 
-  // Listar todos para el API (Requisito 2.1)
+  // Insertar en posición específica (0-indexed)
+  insertarEnPosicion(indice, estudiante) {
+    if (indice < 0 || indice > this._tamano) return false;
+    
+    if (indice === 0) {
+      this.insertarAlInicio(estudiante);
+      return true;
+    }
+
+    const nuevo = new NodoEstudiante(estudiante);
+    let actual = this.cabeza;
+    let anterior = null;
+    let i = 0;
+    
+    while (i < indice) {
+      anterior = actual;
+      actual = actual.siguiente;
+      i++;
+    }
+    
+    nuevo.siguiente = actual;
+    anterior.siguiente = nuevo;
+    this._tamano++;
+    return true;
+  }
+
+  // Listar todos para el API
   listarTodos() {
     const estudiantes = [];
     let actual = this.cabeza;
@@ -38,31 +71,26 @@ class EstudiantesLinkedList {
     return estudiantes;
   }
 
-  // Invertir in-place (Operación obligatoria)
+  // Invertir in-place (Modificación de punteros)
   invertir() {
+    let anterior = null;
     let actual = this.cabeza;
-    let temp = null;
-    
-    // Intercambiar punteros siguiente y anterior de todos los nodos
+    let siguienteNode = null;
+
     while (actual) {
-      temp = actual.anterior;
-      actual.anterior = actual.siguiente;
-      actual.siguiente = temp;
-      actual = actual.anterior; // Avanzamos al "siguiente" original (que ahora es el anterior)
+      siguienteNode = actual.siguiente; // Guardar el siguiente
+      actual.siguiente = anterior;      // Invertir el puntero
+      anterior = actual;                // Avanzar anterior
+      actual = siguienteNode;           // Avanzar actual
     }
-    
-    // Al final, intercambiamos cabeza y cola
-    if (temp) {
-      this.cola = this.cabeza;
-      this.cabeza = temp.anterior;
-    }
+    this.cabeza = anterior;             // La nueva cabeza es el último procesado
   }
 
-  // Buscar nodo por carnet
+  // Buscar por carnet (búsqueda lineal)
   buscarPorCarnet(carnet) {
     let actual = this.cabeza;
     while (actual) {
-      if (actual.estudiante.carnet == carnet) {
+      if (actual.estudiante.carnet === carnet) {
         return actual;
       }
       actual = actual.siguiente;
@@ -70,23 +98,27 @@ class EstudiantesLinkedList {
     return null;
   }
 
-  // Eliminar nodo específico
+  // Eliminar nodo por carnet
   eliminarPorCarnet(carnet) {
-    let actual = this.buscarPorCarnet(carnet);
-    if (!actual) return false;
+    if (!this.cabeza) return false;
 
-    if (actual.anterior) {
-      actual.anterior.siguiente = actual.siguiente;
-    } else {
-      this.cabeza = actual.siguiente;
+    if (this.cabeza.estudiante.carnet === carnet) {
+      this.cabeza = this.cabeza.siguiente;
+      this._tamano--;
+      return true;
     }
 
-    if (actual.siguiente) {
-      actual.siguiente.anterior = actual.anterior;
-    } else {
-      this.cola = actual.anterior;
+    let actual = this.cabeza;
+    let anterior = null;
+
+    while (actual && actual.estudiante.carnet !== carnet) {
+      anterior = actual;
+      actual = actual.siguiente;
     }
 
+    if (!actual) return false; // No encontrado
+
+    anterior.siguiente = actual.siguiente;
     this._tamano--;
     return true;
   }
@@ -97,4 +129,4 @@ class EstudiantesLinkedList {
   }
 }
 
-module.exports = EstudiantesLinkedList;
+module.exports = EstudiantesSimpleLinkedList;

@@ -1,49 +1,50 @@
-const supabase = require('../supabase');
-const EstudiantesLinkedList = require('../services/estudiantes.service');
+const { readJSON, writeJSON } = require('../services/db');
+const EstudiantesSimpleLinkedList = require('../services/estudiantes.service');
+const InscripcionesDoubleLinkedList = require('../services/historial.service');
 
-// Instancia global de la lista (Persistencia en memoria)
-const listaEstudiantes = new EstudiantesLinkedList();
+// Instancia global de estudiantes (en memoria para persistir la estructura de datos viva)
+const listaEstudiantes = new EstudiantesSimpleLinkedList();
 
-// Función para cargar los datos de Supabase a la Lista Enlazada
-exports.cargarDatosALista = async () => {
+// Cargar datos al iniciar el servidor
+const cargarDatosALista = () => {
     try {
-        const { data: datosDeBD, error } = await supabase.from('estudiantes').select('*');
-        if (error) throw error;
-
-        // Limpiamos la lista por si se recarga
+        const datos = readJSON('estudiantes.json', []);
         listaEstudiantes.cabeza = null;
         listaEstudiantes._tamano = 0;
         
-        datosDeBD.forEach(est => {
+        datos.forEach(est => {
             listaEstudiantes.insertarAlFinal(est);
         });
-        console.log(`¡Lista Enlazada Simple reconstruida con éxito! Nodos: ${listaEstudiantes.tamano()}`);
+        console.log(`¡Lista Enlazada Simple reconstruida con éxito! Estudiantes en memoria: ${listaEstudiantes.tamano()}`);
     } catch (error) {
-        console.error('Error al cargar datos a la lista:', error.message);
+        console.error('Error al cargar estudiantes en memoria:', error.message);
     }
 };
 
-// GET /api/estudiantes?search=...&page=...&limit=...
-exports.getEstudiantes = async (req, res) => {
+// GET /api/estudiantes
+const getEstudiantes = (req, res) => {
     try {
         const { search, page = 1, limit = 5 } = req.query;
-        
-        let query = supabase.from('estudiantes').select('*', { count: 'exact' });
+        let todos = listaEstudiantes.listarTodos();
 
+        // Aplicar búsqueda local
         if (search) {
-            query = query.or(`nombre.ilike.%${search}%,carnet.ilike.%${search}%,email.ilike.%${search}%`);
+            const query = search.toLowerCase();
+            todos = todos.filter(e => 
+                e.nombre.toLowerCase().includes(query) || 
+                e.carnet.toLowerCase().includes(query) || 
+                e.email.toLowerCase().includes(query)
+            );
         }
 
-        const start = (page - 1) * limit;
-        const end = start + limit - 1;
-
-        const { data: estudiantes, error, count } = await query.range(start, end);
-
-        if (error) throw error;
+        const count = todos.length;
+        const start = (Number(page) - 1) * Number(limit);
+        const end = start + Number(limit);
+        const paginados = todos.slice(start, end);
 
         res.json({
-            estudiantes,
-            totalPages: Math.ceil(count / limit),
+            estudiantes: paginados,
+            totalPages: Math.ceil(count / Number(limit)) || 1,
             currentPage: Number(page),
             totalItems: count
         });
@@ -52,103 +53,225 @@ exports.getEstudiantes = async (req, res) => {
     }
 };
 
-// POST /api/estudiantes/invertir - Invertir la lista en memoria
-exports.invertirLista = (req, res) => {
-    if (listaEstudiantes.tamano() === 0) {
-        return res.status(400).json({ message: "La lista está vacía" });
+// GET /api/estudiantes/:carnet
+const buscarEstudiante = (req, res) => {
+    const { carnet } = req.params;
+    const nodo = listaEstudiantes.buscarPorCarnet(carnet);
+    if (!nodo) {
+        return res.status(404).json({ message: "Estudiante no encontrado" });
     }
-    listaEstudiantes.invertir();
-    
-    res.status(200).json({
-        message: "Lista invertida exitosamente in-place",
-        data: listaEstudiantes.listarTodos()
-    });
+    res.json(nodo.estudiante);
 };
 
-// POST /api/estudiantes - Crear un nuevo estudiante 
-exports.createEstudiante = async (req, res) => {
+// POST /api/estudiantes
+const createEstudiante = (req, res) => {
     try {
-        const { data: nuevoEstudiante, error } = await supabase
-            .from('estudiantes')
-            .insert([req.body])
-            .select()
-            .single();
+        const { carnet, nombre, email, carrera, semestre, estado = "Activo" } = req.body;
+        if (!carnet || !nombre || !email) {
+            return res.status(400).json({ message: "El carné, nombre y correo son obligatorios" });
+        }
 
-        if (error) throw error;
+        // Validar formato de email
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            return res.status(400).json({ message: "El formato del correo electrónico no es válido" });
+        }
+        // Verificar duplicado
+        if (listaEstudiantes.buscarPorCarnet(carnet)) {
+            return res.status(400).json({ message: `El estudiante con carné ${carnet} ya está registrado` });
+        }
 
-        // Insertamos en la BD y también en nuestra lista
+        const nuevoEstudiante = { carnet, nombre, email, carrera, semestre: Number(semestre), estado };
+        
+        // Insertar en la lista en memoria (al final)
         listaEstudiantes.insertarAlFinal(nuevoEstudiante);
+
+        // Guardar la lista entera en el archivo JSON
+        writeJSON('estudiantes.json', listaEstudiantes.listarTodos());
+
         res.status(201).json(nuevoEstudiante);
     } catch (error) {
-        res.status(400).json({ message: "Error al crear", error: error.message });
+        res.status(500).json({ message: "Error al crear estudiante", error: error.message });
     }
 };
 
-// Actualizar estudiante por Carnet
-exports.updateEstudiante = async (req, res) => {
-    const { carnet } = req.params; // Viene de la URL
-    // Adapté "correo" a "email" y "facultad" a "carrera", "semestre", "estado" para que coincida con tu Angular
-    const { nombre, email, carrera, semestre, estado } = req.body; // Vienen del formulario
+// PUT /api/estudiantes/:carnet
+const updateEstudiante = (req, res) => {
+    const { carnet } = req.params;
+    const { nombre, email, carrera, semestre, estado } = req.body;
 
     try {
-        // 1. Actualizar en Supabase (Persistencia)
-        const { data, error } = await supabase
-            .from('estudiantes')
-            .update({ nombre, email, carrera, semestre, estado })
-            .eq('carnet', carnet);
-
-        if (error) throw error;
-
-        // 2. ACTUALIZACIÓN EN MEMORIA (Lo que vale puntos)
-        // Buscamos el nodo en tu Lista Doblemente Enlazada
-        let actual = listaEstudiantes.cabeza;
-        let encontrado = false;
-
-        while (actual !== null) {
-            // Utilizamos actual.estudiante.carnet (ya que así se llama la propiedad en tu clase Nodo)
-            if (actual.estudiante.carnet === carnet) {
-                // Modificamos los datos del nodo directamente
-                actual.estudiante.nombre = nombre;
-                actual.estudiante.email = email;
-                actual.estudiante.carrera = carrera;
-                actual.estudiante.semestre = semestre;
-                actual.estudiante.estado = estado;
-                encontrado = true;
-                break;
-            }
-            actual = actual.siguiente;
+        const nodo = listaEstudiantes.buscarPorCarnet(carnet);
+        if (!nodo) {
+            return res.status(404).json({ message: "Estudiante no encontrado" });
         }
 
-        if (!encontrado) {
-            return res.status(404).json({ msg: 'Estudiante no encontrado en la lista manual' });
-        }
+        // Modificar los datos del nodo
+        if (nombre) nodo.estudiante.nombre = nombre;
+        if (email) nodo.estudiante.email = email;
+        if (carrera) nodo.estudiante.carrera = carrera;
+        if (semestre) nodo.estudiante.semestre = Number(semestre);
+        if (estado) nodo.estudiante.estado = estado;
 
-        res.json({ msg: 'Estudiante actualizado en DB y Lista Doble', carnet });
+        // Guardar cambios
+        writeJSON('estudiantes.json', listaEstudiantes.listarTodos());
 
+        res.json({ message: "Estudiante actualizado correctamente", estudiante: nodo.estudiante });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ msg: 'Error al actualizar', error: error.message });
+        res.status(500).json({ message: "Error al actualizar estudiante", error: error.message });
     }
 };
 
-// DELETE /api/estudiantes/:carnet - Eliminar un estudiante 
-exports.deleteEstudiante = async (req, res) => {
+// DELETE /api/estudiantes/:carnet
+const deleteEstudiante = (req, res) => {
+    const { carnet } = req.params;
     try {
-        const { error } = await supabase
-            .from('estudiantes')
-            .delete()
-            .eq('carnet', req.params.carnet);
-
-        if (error) throw error;
-
-        // Eliminar nodo de la Lista Doblemente Enlazada
-        const eliminado = listaEstudiantes.eliminarPorCarnet(req.params.carnet);
-        if (eliminado) {
-            console.log(`Nodo eliminado in-place: ${req.params.carnet}`);
+        const eliminado = listaEstudiantes.eliminarPorCarnet(carnet);
+        if (!eliminado) {
+            return res.status(404).json({ message: "Estudiante no encontrado" });
         }
 
-        res.json({ message: "Estudiante eliminado correctamente" });
+        // Guardar cambios
+        writeJSON('estudiantes.json', listaEstudiantes.listarTodos());
+
+        // Eliminar inscripciones asociadas
+        const inscripciones = readJSON('inscripciones.json', []);
+        const filtradas = inscripciones.filter(ins => ins.carnet !== carnet);
+        writeJSON('inscripciones.json', filtradas);
+
+        res.json({ message: "Estudiante e inscripciones eliminados correctamente" });
     } catch (error) {
-        res.status(500).json({ message: "Error al eliminar", error: error.message });
+        res.status(500).json({ message: "Error al eliminar estudiante", error: error.message });
     }
+};
+
+// POST /api/estudiantes/invertir
+const invertirLista = (req, res) => {
+    try {
+        if (listaEstudiantes.tamano() === 0) {
+            return res.status(400).json({ message: "La lista está vacía" });
+        }
+        
+        // Invertir la estructura en memoria
+        listaEstudiantes.invertir();
+        
+        // Guardar la nueva secuencia en el archivo JSON
+        writeJSON('estudiantes.json', listaEstudiantes.listarTodos());
+
+        res.json({
+            message: "Lista invertida exitosamente in-place en memoria",
+            data: listaEstudiantes.listarTodos()
+        });
+    } catch (error) {
+        res.status(500).json({ message: "Error al invertir la lista", error: error.message });
+    }
+};
+
+// --- ENDPOINTS PARA HISTORIAL DE INSCRIPCIONES (Lista Doblemente Enlazada) ---
+
+// GET /api/estudiantes/:carnet/historial
+const getHistorial = (req, res) => {
+    const { carnet } = req.params;
+    const { sort, order } = req.query; // sort: semestre o nota; order: asc o desc
+
+    try {
+        // Cargar todas las inscripciones del JSON
+        const todasInscripciones = readJSON('inscripciones.json', []);
+        
+        // Filtrar las del estudiante
+        const delEstudiante = todasInscripciones.filter(ins => ins.carnet === carnet);
+
+        // Crear una instancia de la lista doblemente enlazada
+        const dll = new InscripcionesDoubleLinkedList();
+        delEstudiante.forEach(ins => dll.insertarAlFinal(ins));
+
+        // Aplicar ordenamiento manual si se especifica
+        if (sort === 'semestre') {
+            dll.ordenarPorSemestre();
+        } else if (sort === 'nota') {
+            dll.ordenarPorNota();
+        }
+
+        // Retornar en el orden deseado (adelante o atrás)
+        const resultado = (order === 'desc') ? dll.listarInverso() : dll.listarTodos();
+
+        res.json(resultado);
+    } catch (error) {
+        res.status(500).json({ message: "Error al obtener historial de inscripciones", error: error.message });
+    }
+};
+
+// POST /api/estudiantes/:carnet/historial
+const createInscripcion = (req, res) => {
+    const { carnet } = req.params;
+    const { curso, semestre, nota, estado = "activa" } = req.body;
+
+    if (!curso || !semestre || nota === undefined) {
+        return res.status(400).json({ message: "Curso, semestre y nota son obligatorios" });
+    }
+
+    try {
+        // Verificar que el estudiante existe
+        if (!listaEstudiantes.buscarPorCarnet(carnet)) {
+            return res.status(404).json({ message: "Estudiante no encontrado" });
+        }
+
+        const todasInscripciones = readJSON('inscripciones.json', []);
+        
+        // Evitar duplicados del mismo curso
+        const yaInscrito = todasInscripciones.some(ins => ins.carnet === carnet && ins.curso === curso);
+        if (yaInscrito) {
+            return res.status(400).json({ message: "El estudiante ya cuenta con una inscripción para este curso" });
+        }
+
+        const nuevaInscripcion = {
+            carnet,
+            curso,
+            semestre: Number(semestre),
+            nota: Number(nota),
+            estado
+        };
+
+        // Agregar al JSON
+        todasInscripciones.push(nuevaInscripcion);
+        writeJSON('inscripciones.json', todasInscripciones);
+
+        res.status(201).json(nuevaInscripcion);
+    } catch (error) {
+        res.status(500).json({ message: "Error al registrar inscripción", error: error.message });
+    }
+};
+
+// DELETE /api/estudiantes/:carnet/historial/:curso
+const deleteInscripcion = (req, res) => {
+    const { carnet, curso } = req.params;
+
+    try {
+        const todasInscripciones = readJSON('inscripciones.json', []);
+        const longitudOriginal = todasInscripciones.length;
+        
+        const filtradas = todasInscripciones.filter(ins => !(ins.carnet === carnet && ins.curso === curso));
+        
+        if (filtradas.length === longitudOriginal) {
+            return res.status(404).json({ message: "Inscripción no encontrada" });
+        }
+
+        writeJSON('inscripciones.json', filtradas);
+        res.json({ message: "Inscripción eliminada correctamente" });
+    } catch (error) {
+        res.status(500).json({ message: "Error al eliminar inscripción", error: error.message });
+    }
+};
+
+module.exports = {
+    cargarDatosALista,
+    getEstudiantes,
+    buscarEstudiante,
+    createEstudiante,
+    updateEstudiante,
+    deleteEstudiante,
+    invertirLista,
+    getHistorial,
+    createInscripcion,
+    deleteInscripcion
 };

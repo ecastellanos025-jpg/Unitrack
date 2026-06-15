@@ -43,6 +43,7 @@ El repositorio está dividido en dos partes principales:
 3. Configura las variables de entorno. Crea un archivo `.env` en la raíz de la carpeta `backend/` e incluye tus credenciales de Supabase (revisa los requerimientos del proyecto para los nombres exactos de las variables):
    ```env
    PORT=3000
+   NODE_ENV=development
    SUPABASE_URL=tu_supabase_url
    SUPABASE_KEY=tu_supabase_anon_key
    ```
@@ -50,6 +51,10 @@ El repositorio está dividido en dos partes principales:
    ```bash
    npm run dev
    ```
+
+> **Nota:** Al iniciar el servidor por primera vez, se creará automáticamente la carpeta `backend/data/` con archivos JSON de muestra (`estudiantes.json`, `cursos.json`, `catedraticos.json`, `inscripciones.json`, `pensum.json`). Esta carpeta es la fuente de persistencia local y está excluida del control de versiones en `.gitignore`.
+
+> **Nota sobre Supabase:** El archivo `supabase.js` existe en el backend como preparación para una futura migración a base de datos en la nube. Actualmente el sistema opera con persistencia en archivos JSON locales.
 
 ### 2. Configuración del Frontend
 
