@@ -24,7 +24,19 @@ const cargarDatosALaEstructura = () => {
 const getCursos = (req, res) => {
     try {
         const todos = catalogoCursos.inOrden();
-        res.json(todos);
+        // Enriquecer cada curso con cupos en tiempo real
+        const inscripciones = readJSON('inscripciones.json', []);
+        const cursosConCupos = todos.map(curso => {
+            const ocupados = inscripciones.filter(
+                ins => ins.curso === curso.codigo && ins.estado !== 'cancelada'
+            ).length;
+            return {
+                ...curso,
+                cuposOcupados: ocupados,
+                cuposDisponibles: curso.cupoMaximo - ocupados
+            };
+        });
+        res.json(cursosConCupos);
     } catch (error) {
         res.status(500).json({ message: "Error al obtener catálogo de cursos", error: error.message });
     }
@@ -123,6 +135,29 @@ const getGrafico = (req, res) => {
     });
 };
 
+// GET /api/cursos/cupos - Cupos disponibles de todos los cursos
+const getCupos = (req, res) => {
+    try {
+        const todos = catalogoCursos.inOrden();
+        const inscripciones = readJSON('inscripciones.json', []);
+        const cupos = todos.map(curso => {
+            const ocupados = inscripciones.filter(
+                ins => ins.curso === curso.codigo && ins.estado !== 'cancelada'
+            ).length;
+            return {
+                codigo: curso.codigo,
+                nombre: curso.nombre,
+                cupoMaximo: curso.cupoMaximo,
+                cuposOcupados: ocupados,
+                cuposDisponibles: curso.cupoMaximo - ocupados
+            };
+        });
+        res.json(cupos);
+    } catch (error) {
+        res.status(500).json({ message: "Error al obtener cupos", error: error.message });
+    }
+};
+
 module.exports = {
     cargarDatosALaEstructura,
     getCursos,
@@ -132,5 +167,6 @@ module.exports = {
     getPreOrden,
     getPostOrden,
     getStats,
-    getGrafico
+    getGrafico,
+    getCupos
 };

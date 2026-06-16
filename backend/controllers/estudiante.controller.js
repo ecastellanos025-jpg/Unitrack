@@ -66,7 +66,7 @@ const buscarEstudiante = (req, res) => {
 // POST /api/estudiantes
 const createEstudiante = (req, res) => {
     try {
-        const { carnet, nombre, email, carrera, semestre, estado = "Activo" } = req.body;
+        const { carnet, nombre, apellido, email, carrera, semestre, fechaNacimiento, estado = "Activo" } = req.body;
         if (!carnet || !nombre || !email) {
             return res.status(400).json({ message: "El carné, nombre y correo son obligatorios" });
         }
@@ -81,7 +81,7 @@ const createEstudiante = (req, res) => {
             return res.status(400).json({ message: `El estudiante con carné ${carnet} ya está registrado` });
         }
 
-        const nuevoEstudiante = { carnet, nombre, email, carrera, semestre: Number(semestre), estado };
+        const nuevoEstudiante = { carnet, nombre, apellido: apellido || '', email, carrera, semestre: Number(semestre), fechaNacimiento: fechaNacimiento || '', estado };
         
         // Insertar en la lista en memoria (al final)
         listaEstudiantes.insertarAlFinal(nuevoEstudiante);
@@ -98,7 +98,7 @@ const createEstudiante = (req, res) => {
 // PUT /api/estudiantes/:carnet
 const updateEstudiante = (req, res) => {
     const { carnet } = req.params;
-    const { nombre, email, carrera, semestre, estado } = req.body;
+    const { nombre, apellido, email, carrera, semestre, fechaNacimiento, estado } = req.body;
 
     try {
         const nodo = listaEstudiantes.buscarPorCarnet(carnet);
@@ -108,9 +108,11 @@ const updateEstudiante = (req, res) => {
 
         // Modificar los datos del nodo
         if (nombre) nodo.estudiante.nombre = nombre;
+        if (apellido !== undefined) nodo.estudiante.apellido = apellido;
         if (email) nodo.estudiante.email = email;
         if (carrera) nodo.estudiante.carrera = carrera;
         if (semestre) nodo.estudiante.semestre = Number(semestre);
+        if (fechaNacimiento !== undefined) nodo.estudiante.fechaNacimiento = fechaNacimiento;
         if (estado) nodo.estudiante.estado = estado;
 
         // Guardar cambios
@@ -204,7 +206,7 @@ const getHistorial = (req, res) => {
 // POST /api/estudiantes/:carnet/historial
 const createInscripcion = (req, res) => {
     const { carnet } = req.params;
-    const { curso, semestre, nota, estado = "activa" } = req.body;
+    const { curso, semestre, nota, estado = "activa", posicion = "final" } = req.body;
 
     if (!curso || !semestre || nota === undefined) {
         return res.status(400).json({ message: "Curso, semestre y nota son obligatorios" });
@@ -217,11 +219,26 @@ const createInscripcion = (req, res) => {
         }
 
         const todasInscripciones = readJSON('inscripciones.json', []);
-        
+
         // Evitar duplicados del mismo curso
         const yaInscrito = todasInscripciones.some(ins => ins.carnet === carnet && ins.curso === curso);
         if (yaInscrito) {
             return res.status(400).json({ message: "El estudiante ya cuenta con una inscripción para este curso" });
+        }
+
+        // ── VALIDAR CUPO DISPONIBLE ────────────────────────────────
+        const cursos = readJSON('cursos.json', []);
+        const cursoData = cursos.find(c => c.codigo === curso);
+        if (cursoData) {
+            const ocupados = todasInscripciones.filter(
+                ins => ins.curso === curso && ins.estado !== 'cancelada'
+            ).length;
+            const disponibles = cursoData.cupoMaximo - ocupados;
+            if (disponibles <= 0) {
+                return res.status(400).json({
+                    message: `El curso "${cursoData.nombre}" no tiene cupos disponibles (${cursoData.cupoMaximo}/${cursoData.cupoMaximo})`
+                });
+            }
         }
 
         const nuevaInscripcion = {
@@ -232,14 +249,38 @@ const createInscripcion = (req, res) => {
             estado
         };
 
-        // Agregar al JSON
-        todasInscripciones.push(nuevaInscripcion);
-        writeJSON('inscripciones.json', todasInscripciones);
+        // Insertar al inicio o al final según posicion
+        if (posicion === 'inicio') {
+            const otrasInscripciones = todasInscripciones.filter(ins => ins.carnet !== carnet);
+            const delEstudiante = todasInscripciones.filter(ins => ins.carnet === carnet);
+            delEstudiante.unshift(nuevaInscripcion);
+            writeJSON('inscripciones.json', [...otrasInscripciones, ...delEstudiante]);
+        } else {
+            todasInscripciones.push(nuevaInscripcion);
+            writeJSON('inscripciones.json', todasInscripciones);
+        }
 
-        res.status(201).json(nuevaInscripcion);
+        // ── CALCULAR CUPOS ACTUALIZADOS PARA LA RESPUESTA ─────────
+        const inscripcionesActualizadas = readJSON('inscripciones.json', []);
+        const nuevosOcupados = inscripcionesActualizadas.filter(
+            ins => ins.curso === curso && ins.estado !== 'cancelada'
+        ).length;
+        const cupoMaximo = cursoData?.cupoMaximo || null;
+        const cuposDisponibles = cupoMaximo !== null ? cupoMaximo - nuevosOcupados : null;
+
+        res.status(201).json({
+            ...nuevaInscripcion,
+            posicion,
+            cupoInfo: cupoMaximo !== null ? {
+                cupoMaximo,
+                cuposOcupados: nuevosOcupados,
+                cuposDisponibles
+            } : null
+        });
     } catch (error) {
         res.status(500).json({ message: "Error al registrar inscripción", error: error.message });
     }
+
 };
 
 // DELETE /api/estudiantes/:carnet/historial/:curso
@@ -249,15 +290,32 @@ const deleteInscripcion = (req, res) => {
     try {
         const todasInscripciones = readJSON('inscripciones.json', []);
         const longitudOriginal = todasInscripciones.length;
-        
-        const filtradas = todasInscripciones.filter(ins => !(ins.carnet === carnet && ins.curso === curso));
-        
+
+        const filtradas = todasInscripciones.filter(
+            ins => !(ins.carnet === carnet && ins.curso === curso)
+        );
+
         if (filtradas.length === longitudOriginal) {
             return res.status(404).json({ message: "Inscripción no encontrada" });
         }
 
         writeJSON('inscripciones.json', filtradas);
-        res.json({ message: "Inscripción eliminada correctamente" });
+
+        // ── CUPOS ACTUALIZADOS TRAS CANCELAR ──────────────────────
+        const cursos = readJSON('cursos.json', []);
+        const cursoData = cursos.find(c => c.codigo === curso);
+        const nuevosOcupados = filtradas.filter(
+            ins => ins.curso === curso && ins.estado !== 'cancelada'
+        ).length;
+
+        res.json({
+            message: "Inscripción eliminada correctamente",
+            cupoInfo: cursoData ? {
+                cupoMaximo: cursoData.cupoMaximo,
+                cuposOcupados: nuevosOcupados,
+                cuposDisponibles: cursoData.cupoMaximo - nuevosOcupados
+            } : null
+        });
     } catch (error) {
         res.status(500).json({ message: "Error al eliminar inscripción", error: error.message });
     }

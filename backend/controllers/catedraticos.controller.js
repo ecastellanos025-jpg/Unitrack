@@ -51,7 +51,7 @@ const getCatedraticoByCodigo = (req, res) => {
 
 // POST /api/catedraticos - Insertar
 const createCatedratico = (req, res) => {
-    const { codigoEmpleado, nombre, especialidad, email } = req.body;
+    const { codigoEmpleado, nombre, apellido, especialidad, email, cursosAsignados } = req.body;
 
     if (!codigoEmpleado || !nombre || !email) {
         return res.status(400).json({ message: "El código de empleado, nombre y email son obligatorios" });
@@ -63,7 +63,14 @@ const createCatedratico = (req, res) => {
             return res.status(400).json({ message: `El catedrático con código ${codigoEmpleado} ya existe` });
         }
 
-        const nuevoCatedratico = { codigoEmpleado, nombre, especialidad, email };
+        const nuevoCatedratico = {
+            codigoEmpleado,
+            nombre,
+            apellido: apellido || '',
+            especialidad,
+            email,
+            cursosAsignados: cursosAsignados || []
+        };
         
         // Insertar en la tabla
         tablaCatedraticos.insertar(codigoEmpleado, nuevoCatedratico);
